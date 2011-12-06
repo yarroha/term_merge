@@ -1,0 +1,199 @@
+<?php
+
+/**
+ * Implementation of hook_help().
+ */
+function term_merge_help($path, $arg) {
+  switch ($path) {
+    case 'admin/modules#description':
+      return t('Allows site admins to merge two terms.');
+  }
+}
+
+/**
+ * Implementation of hook_menu()
+ */
+function term_merge_menu() {
+  $items = array();
+
+  $items['admin/content/term_merge'] = array(
+    'title' => 'Merge terms',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('term_merge_check_vocabularies_form'),
+    'access arguments' => array('administer taxonomy'),
+    'description' => 'Allows site admins to merge two terms.',
+  );
+
+  $items['admin/content/taxonomy/merge/%/%'] = array(
+    'title' => 'Select Terms for merge',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('term_merge_check_terms_for_merge_form', 4, 5),
+    'access arguments' => array('administer taxonomy'),
+  );
+
+  return $items;
+}
+
+/**
+ * Presents the form to select vocabularies whose terms need to be merged.
+ */
+function term_merge_check_vocabularies_form() {
+  $form = array();
+  $options = array();
+
+  $vocabularies = taxonomy_get_vocabularies();
+
+  foreach ($vocabularies as $key => $vocabulary) {
+    $options[$vocabulary->vid] = $vocabulary->name;
+  }
+
+  if (!empty($options)) {
+
+    $form['from_vocabulary'] = array(
+      '#type' => 'select',
+      '#title' => t('Move term from vocabulary'),
+      '#options' => $options,
+      '#description' => t('Vocabulary term from which should be moved.'),
+    );
+
+    $form['destination_vocabulary'] = array(
+      '#type' => 'select',
+      '#title' => t('Destination vocabulary'),
+      '#options' => $options,
+      '#description' => t('Destination vocabulary to which term will be moved.'),
+    );
+
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Choose the dictionaries')
+    );
+  }
+  else {
+    drupal_set_message(t('You should create at least one dictionary.'), 'warning');
+  }
+
+  return $form;
+}
+
+/**
+ * Redirect user to the merge page, where he can select needed terms.
+ */
+function term_merge_check_vocabularies_form_submit($form, &$form_state) {
+  $form_state['redirect'] = 'admin/content/taxonomy/merge/'
+      . $form_state['values']['from_vocabulary'] . '/'
+      . $form_state['values']['destination_vocabulary'];
+}
+
+/**
+ * Presents the form to select terms which will be merged.
+ */
+function term_merge_check_terms_for_merge_form(&$form_state, $from_vocabulary_id, $destination_vocabulary_id) {
+  $form = array();
+
+  $terms_for_merge = array();
+  $destination_terms = array('new' => 'Create a new term');
+
+  $terms = taxonomy_get_tree($from_vocabulary_id);
+
+  foreach ($terms as $key => $term) {
+    $terms_for_merge[$term->tid] = $term->name;
+  }
+
+  if (!empty($terms_for_merge)) {
+    $terms = taxonomy_get_tree($destination_vocabulary_id);
+    foreach ($terms as $key => $term) {
+      $destination_terms[$term->tid] = $term->name;
+    }
+
+    $form['term_for_merge'] = array(
+      '#type' => 'select',
+      '#title' => t('Select the term which should be moved'),
+      '#options' => $terms_for_merge,
+      '#description' => t('Term which will be moved.'),
+    );
+
+    $form['destination_term'] = array(
+      '#type' => 'select',
+      '#title' => t('Destination term'),
+      '#options' => $destination_terms,
+      '#description' => t('Destination term, with which previous term will be merged.'),
+    );
+
+    $form['remove_merged_term'] = array(
+      '#type' => 'checkbox',
+      '#title' => t('Remove merged term.'),
+      '#default_value' => 0,
+      '#description' => t('If checked, the moved term will be removed.'),
+    );
+
+    $form['destination_vocabulary_id'] = array(
+      '#type' => 'hidden',
+      '#value' => $destination_vocabulary_id,
+    );
+
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Merge')
+    );
+  }
+  else {
+    drupal_set_message(t('You should have at least one term in the dictionary.'), 'warning');
+  }
+
+  return $form;
+}
+
+/**
+ * Checks what to do with terms which should be marged.
+ */
+function term_merge_check_terms_for_merge_form_submit($form, &$form_state) {
+  $term_for_merge = taxonomy_get_term($form_state['values']['term_for_merge']);
+  $destination_term = array();
+  //If term should be new, create this term.
+  if ($form_state['values']['destination_term'] === 'new') {
+    $destination_term = (array) $term_for_merge;
+    $destination_term['vid'] = $form_state['values']['destination_vocabulary_id'];
+    unset($destination_term['tid']);
+    $destination_term = taxonomy_save_term($destination_term);
+  }
+  else {
+    $destination_term = taxonomy_get_term($form_state['values']['destination_term']);
+  }
+
+  if (TRUE !== term_merge_merge($term_for_merge, $destination_term, $form_state['values']['remove_merged_term'])) {
+    drupal_set_message(t('Something went wrong.'));
+  }
+}
+
+/**
+ * Merge two terms, and change nodes' link from the old term to the new term.
+ *
+ * @param $term_for_merge
+ *   A term object. Which should be marged.
+ * @param $destination_term
+ *   A destination term object.
+ * @param $remove_merged_term
+ *   Boolean variable, which decides remove merged term or not.
+ * @return
+ *   Return TRUE if all was ok.
+ */
+function term_merge_merge($term_for_merge, $destination_term, $remove_merged_term = true) {
+
+  //TODO: This could lead to duplicate synonyms.
+  if (isset($term_for_merge->synonyms)) {
+    $destination_term->synonyms.= "\n" . $term_for_merge->synonyms;
+  }
+
+  //This code ignores node save, you may need to change it
+  db_query("UPDATE {term_node} SET tid = '%d' WHERE tid = '%d'", $term_for_merge->tid, $destination_term->tid);
+
+  $destination_term = (array) $destination_term;
+  taxonomy_save_term($destination_term);
+  if ($remove_merged_term) {
+    taxonomy_del_term($term_for_merge->tid);
+    drupal_set_message(t('Term @term was deleted.', array('@term' => $term_for_merge->name)));
+  }
+
+  return TRUE;
+}
+

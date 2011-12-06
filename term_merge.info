@@ -1,0 +1,6 @@
+name = "Term Merge"
+description = "Offers ability to merge taxonomy terms."
+dependencies[] = taxonomy
+package = "Administration"
+
+core = 6.x
