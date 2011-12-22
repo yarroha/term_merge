@@ -65,7 +65,7 @@ function term_merge_check_vocabularies_form() {
 
     $form['submit'] = array(
       '#type' => 'submit',
-      '#value' => t('Choose the dictionaries')
+      '#value' => t('Choose the vocabularies')
     );
   }
   else {
@@ -184,14 +184,16 @@ function term_merge_merge($term_for_merge, $destination_term, $remove_merged_ter
     $destination_term->synonyms.= "\n" . $term_for_merge->synonyms;
   }
 
-  //This code ignores node save, you may need to change it
+  //This code ignores node save, you may need to change it.
   db_query("UPDATE {term_node} SET tid = '%d' WHERE tid = '%d'", $term_for_merge->tid, $destination_term->tid);
 
   $destination_term = (array) $destination_term;
   taxonomy_save_term($destination_term);
   if ($remove_merged_term) {
     taxonomy_del_term($term_for_merge->tid);
-    drupal_set_message(t('Term @term was deleted.', array('@term' => $term_for_merge->name)));
+    drupal_set_message(t('Term @term was merged and removed.', array('@term' => $term_for_merge->name)));
+  } else {
+    drupal_set_message(t('Term @term was removed.', array('@term' => $term_for_merge->name)));
   }
 
   return TRUE;
